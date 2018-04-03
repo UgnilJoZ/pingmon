@@ -1,0 +1,7 @@
+[package]
+name = "pingmon"
+version = "0.1.0"
+authors = ["Joz <joz@spline.de>"]
+
+[dependencies]
+systemd = "~0.2"
