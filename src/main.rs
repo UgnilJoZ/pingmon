@@ -1,12 +1,14 @@
 use std::process;
 use std::process::Command;
 use std::thread;
+use std::time::Duration;
 extern crate systemd;
-//use systemd::daemon;
+use systemd::daemon;
 use std::env;
 use std::io::BufReader;
 use std::io::BufRead;
 use std::fs::File;
+use std::collections::HashMap;
 
 #[derive(Debug)]
 enum PingError {
@@ -43,26 +45,40 @@ fn ping(host: &str, wait_secs: u16) -> Result<(), PingError> {
 	}
 }
 
-fn ping_many(hosts: &[String], wait_secs: u16) -> Vec<String> {
+fn ping_many(hosts: &[String], wait_secs: u16, resultmap: &mut HashMap<String, String>) {
 	// Spawn each ping in it's own thread
 	let mut children = vec![];
 	for host in hosts {
-		let host = host.clone();
-		children.push(thread::spawn(move || ping(&host, wait_secs) ));
+		let host_cloned = host.clone();
+		children.push((host, thread::spawn(move || ping(&host_cloned, wait_secs) )));
 	}
 
 	// Collect the status of the pings in the right order
-	children
-		.into_iter()
-		.map(|c| c.join().unwrap_or(Err(PingError::Thread)))
-		.map(|p| pingresult_to_str(p))
-		.collect()
+	while let Some((host, thread)) = children.pop() {
+		let result = thread.join().unwrap_or(Err(PingError::Thread));
+		let result = pingresult_to_str(result);
+		match resultmap.insert(host.clone(), result.clone()) {
+			// None: The value was not in the map before.
+			None =>	println!("Host {} starts as {}", host, result),
+			// Some: the value was in there
+			Some(old_value) => 
+				if result != old_value {
+					println!("Host {} begins {} period", host, result)
+				
+				},
+		}
+	}
 }
 
 fn main() {
 	// Read whitespace separated $PINGMON_HOSTS or the lines of $PINGMON_HOSTSFILE
-	let hosts: Vec<String> = match env::var_os("PINGMON_HOSTS") {
-		Some(val) => val.into_string().expect("$PINGMON_HOSTS has to be valid UTF-8").split_whitespace().map(|l| String::from(l)).collect(),
+	let mut hosts: Vec<String> = match env::var_os("PINGMON_HOSTS") {
+		Some(val) => val
+			.into_string()
+			.expect("$PINGMON_HOSTS has to be valid UTF-8")
+			.split_whitespace()
+			.map(|l| String::from(l))
+			.collect(),
 		None => match env::var_os("PINGMON_HOSTSFILE") {
 			Some(file) => {
 				let file = File::open(file).expect("I could not read the file you gave me as PINGMON_HOSTSFILE.");
@@ -74,5 +90,32 @@ fn main() {
 			}
 		},
 	};
-	println!("{:?}", ping_many(&hosts, 1));
+	hosts.reverse();
+	// Other params
+	let sleep_time = match env::var_os("PINGMON_SLEEP") {
+		Some(val) => val.into_string().expect("$PINGMON_SLEEP has to be valid UTF-8").parse().expect("PINGMON_SLEEP has to be a number"),
+		None => 10,
+	};
+	let deadline_secs = match env::var_os("PINGMON_TIMEOUT") {
+		Some(val) => val.into_string().expect("$PINGMON_TIMEOUT has to be valid UTF-8").parse().expect("PINGMON_TIMEOUT has to be a number"),
+		None => 1,
+	};
+
+	// Ping status storage
+	let mut map = HashMap::new();
+
+	// Initial ping
+	ping_many(&hosts, deadline_secs, &mut map);
+
+	// Notify systemd
+	let notify_fields: HashMap<&str, &str> = [("READY", "1")].iter().cloned().collect();
+	if daemon::notify(false, notify_fields).is_err() {
+		println!("Startup complete");
+	}
+	
+	// Main loop
+	loop {
+		thread::sleep(Duration::from_secs(sleep_time));
+		ping_many(&hosts, deadline_secs, &mut map);
+	}
 }
