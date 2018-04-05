@@ -1,0 +1,12 @@
+[Unit]
+Description=Ping monitor
+After=network-online.target network.target
+
+[Service]
+EnvironmentFile=%h/Dokumente/prog/pingmon/config
+Type=notify
+ExecStart=%h/Dokumente/prog/pingmon/target/release/pingmon
+
+[Install]
+WantedBy=multi-user.target
+
