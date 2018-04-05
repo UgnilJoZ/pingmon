@@ -4,6 +4,7 @@ use std::thread;
 use std::time::Duration;
 extern crate systemd;
 use systemd::daemon;
+use systemd::journal;
 use std::env;
 use std::io::BufReader;
 use std::io::BufRead;
@@ -59,12 +60,21 @@ fn ping_many(hosts: &[String], wait_secs: u16, resultmap: &mut HashMap<String, S
 		let result = pingresult_to_str(result);
 		match resultmap.insert(host.clone(), result.clone()) {
 			// None: The value was not in the map before.
-			None =>	println!("Host {} starts as {}", host, result),
+			None =>	{
+				let message = format!("Host {} starts as {}", host, result);
+				journal::send(&[
+					      &format!("MESSAGE={}", message),
+					      &format!("HOST={}", host),
+					      &format!("HOST_STATUS={}", result)]);
+			},
 			// Some: the value was in there
 			Some(old_value) => 
 				if result != old_value {
-					println!("Host {} begins {} period", host, result)
-				
+					let message = format!("Host {} begins {} period", host, result);
+					journal::send(&[
+						      &format!("MESSAGE={}", message),
+						      &format!("HOST={}", host),
+						      &format!("HOST_STATUS={}", result)]);
 				},
 		}
 	}
