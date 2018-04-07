@@ -1,11 +1,15 @@
 [Unit]
-Description=Ping monitor
+Description=Pingmon
 After=network-online.target network.target
 
 [Service]
-EnvironmentFile=%h/Dokumente/prog/pingmon/config
 Type=notify
-ExecStart=%h/Dokumente/prog/pingmon/target/release/pingmon
+User=nobody
+Group=nobody
+EnvironmentFile=/etc/pingmon.conf
+ExecStart=/usr/local/bin/pingmon
+ProtectSystem=strict
+ProtectHome=True
 
 [Install]
 WantedBy=multi-user.target
