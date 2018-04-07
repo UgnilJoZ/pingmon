@@ -1,49 +1,27 @@
-use std::process;
-use std::process::Command;
-use std::thread;
+use std::{env,thread};
+use std::process::{self,Command};
 use std::time::Duration;
-extern crate systemd;
-use systemd::daemon;
-use systemd::journal;
-use std::env;
-use std::io::BufReader;
-use std::io::BufRead;
 use std::fs::File;
+extern crate systemd;
+use systemd::{daemon,journal};
+use std::io::{BufRead,BufReader};
 use std::collections::HashMap;
 
-#[derive(Debug)]
-enum PingError {
-	Unresolvable,
-	Down,
-	Thread,
-}
-
-fn pingresult_to_str(val: Result<(), PingError>) -> String {
-	match val {
-		Ok(_) => "UP",
-		Err(e) => match e {
-			PingError::Unresolvable => "UNRESOLVABLE",
-			PingError::Down => "DOWN",
-			PingError::Thread => "THREAD_ERROR",
-		},
-	}.to_string()
-}
-
-fn ping(host: &str, wait_secs: u16) -> Result<(), PingError> {
+fn ping(host: &str, wait_secs: u16) -> String {
 	let output = match Command::new("ping").args(&[host, "-c1", &format!("-w{}", wait_secs)]).output() {
-		Err(_) => return Err(PingError::Down),
+		Err(_) => return "THREAD_ERROR".to_string(),
 		Ok(output) => output,
 	};
 
 	if output.status.success() {
-		Ok(())
+		"UP"
 	} else {
 		// If ping exit code is 2, the argument was unresolvable
 		if output.status.code() == Some(2)
-			{ Err(PingError::Unresolvable) }
+			{ "UNRESOLVABLE" }
 		else
-			{ Err(PingError::Down) }
-	}
+			{ "DOWN" }
+	}.to_string()
 }
 
 fn ping_many(hosts: &[String], wait_secs: u16, resultmap: &mut HashMap<String, String>) {
@@ -54,10 +32,9 @@ fn ping_many(hosts: &[String], wait_secs: u16, resultmap: &mut HashMap<String, S
 		children.push((host, thread::spawn(move || ping(&host_cloned, wait_secs) )));
 	}
 
-	// Collect the status of the pings in the right order
+	// Collect the status of the pings
 	while let Some((host, thread)) = children.pop() {
-		let result = thread.join().unwrap_or(Err(PingError::Thread));
-		let result = pingresult_to_str(result);
+		let result = thread.join().unwrap_or("THREAD_ERROR".to_string());
 		match resultmap.insert(host.clone(), result.clone()) {
 			// None: The value was not in the map before.
 			None =>	{
@@ -70,7 +47,7 @@ fn ping_many(hosts: &[String], wait_secs: u16, resultmap: &mut HashMap<String, S
 			// Some: the value was in there
 			Some(old_value) => 
 				if result != old_value {
-					let message = format!("Host {} begins {} period", host, result);
+					let message = format!("Host {} turns {}", host, result);
 					journal::send(&[
 						      &format!("MESSAGE={}", message),
 						      &format!("HOST={}", host),
@@ -84,11 +61,8 @@ fn main() {
 	// Read whitespace separated $PINGMON_HOSTS or the lines of $PINGMON_HOSTSFILE
 	let mut hosts: Vec<String> = match env::var_os("PINGMON_HOSTS") {
 		Some(val) => val
-			.into_string()
-			.expect("$PINGMON_HOSTS has to be valid UTF-8")
-			.split_whitespace()
-			.map(|l| String::from(l))
-			.collect(),
+			.into_string().expect("$PINGMON_HOSTS has to be valid UTF-8")
+			.split_whitespace().map(|l| String::from(l)).collect(),
 		None => match env::var_os("PINGMON_HOSTSFILE") {
 			Some(file) => {
 				let file = File::open(file).expect("I could not read the file you gave me as PINGMON_HOSTSFILE.");
@@ -111,10 +85,8 @@ fn main() {
 		None => 1,
 	};
 
-	// Ping status storage
+	// Initialize ping status storage with current state
 	let mut map = HashMap::new();
-
-	// Initial ping
 	ping_many(&hosts, deadline_secs, &mut map);
 
 	// Notify systemd
