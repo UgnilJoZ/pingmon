@@ -8,19 +8,19 @@ use std::io::{BufRead,BufReader};
 use std::collections::HashMap;
 
 fn ping(host: &str, wait_secs: u16) -> String {
-	let output = match Command::new("ping").args(&[host, "-c1", &format!("-w{}", wait_secs)]).output() {
-		Err(_) => return "THREAD_ERROR".to_string(),
-		Ok(output) => output,
-	};
-
-	if output.status.success() {
-		"UP"
-	} else {
-		// If ping exit code is 2, the argument was unresolvable
-		if output.status.code() == Some(2)
-			{ "UNRESOLVABLE" }
-		else
-			{ "DOWN" }
+	match Command::new("ping").args(&[host, "-c1", &format!("-w{}", wait_secs)]).output() {
+		Err(_) => "THREAD_ERROR",
+		Ok(output) => {
+			if output.status.success() {
+				"UP"
+			} else {
+				// If ping exit code is 2, the argument was unresolvable
+				if output.status.code() == Some(2)
+					{ "UNRESOLVABLE" }
+				else
+					{ "DOWN" }
+			}
+		}
 	}.to_string()
 }
 
@@ -42,7 +42,8 @@ fn ping_many(hosts: &[String], wait_secs: u16, resultmap: &mut HashMap<String, S
 				journal::send(&[
 					      &format!("MESSAGE={}", message),
 					      &format!("HOST={}", host),
-					      &format!("HOST_STATUS={}", result)]);
+					      &format!("HOST_STATUS={}", result),
+					      &"EVENT=FIRSTPING"]);
 			},
 			// Some: the value was in there
 			Some(old_value) => 
@@ -51,7 +52,8 @@ fn ping_many(hosts: &[String], wait_secs: u16, resultmap: &mut HashMap<String, S
 					journal::send(&[
 						      &format!("MESSAGE={}", message),
 						      &format!("HOST={}", host),
-						      &format!("HOST_STATUS={}", result)]);
+						      &format!("HOST_STATUS={}", result),
+						      &"EVENT=STATUSCHANGE"]);
 				},
 		}
 	}
