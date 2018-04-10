@@ -24,6 +24,15 @@ fn ping(host: &str, wait_secs: u16) -> String {
 	}.to_string()
 }
 
+fn log(host: &String, verb: &str, status: &String) {
+	let message = format!("Host {} {} {}", host, verb, status);
+	journal::send(&[
+		&format!("MESSAGE={}", message),
+		&format!("HOST={}", host),
+		&format!("STATUS={}", status),
+		&format!("VERB={}", verb)]);
+}
+
 fn ping_many(hosts: &[String], wait_secs: u16, resultmap: &mut HashMap<String, String>) {
 	// Spawn each ping in it's own thread
 	let mut children = vec![];
@@ -35,26 +44,12 @@ fn ping_many(hosts: &[String], wait_secs: u16, resultmap: &mut HashMap<String, S
 	// Collect the status of the pings
 	while let Some((host, thread)) = children.pop() {
 		let result = thread.join().unwrap_or("THREAD_ERROR".to_string());
+
+		// If insert returns None, the host has not been in the map before
 		match resultmap.insert(host.clone(), result.clone()) {
-			// None: The value was not in the map before.
-			None =>	{
-				let message = format!("Host {} starts as {}", host, result);
-				journal::send(&[
-					      &format!("MESSAGE={}", message),
-					      &format!("HOST={}", host),
-					      &format!("HOST_STATUS={}", result),
-					      &"EVENT=FIRSTPING"]);
-			},
-			// Some: the value was in there
-			Some(old_value) => 
-				if result != old_value {
-					let message = format!("Host {} turns {}", host, result);
-					journal::send(&[
-						      &format!("MESSAGE={}", message),
-						      &format!("HOST={}", host),
-						      &format!("HOST_STATUS={}", result),
-						      &"EVENT=STATUSCHANGE"]);
-				},
+			None =>	log(host, "starts as", &result),
+			Some(old_value) => if result != old_value 
+				{ log(host, "turns", &result) },
 		}
 	}
 }
@@ -68,7 +63,7 @@ fn main() {
 		None => match env::var_os("PINGMON_HOSTSFILE") {
 			Some(file) => {
 				let file = File::open(file).expect("I could not read the file you gave me as PINGMON_HOSTSFILE.");
-				BufReader::new(file).lines().map(|l| l.unwrap()).collect()
+				BufReader::new(file).lines().map(|l| l.expect("Failed to read file.")).collect()
 			},
 			None => {
 				println!("You have to give me the environment variables PINGMON_HOSTS xor PINGMON_HOSTSFILE!");
